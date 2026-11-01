@@ -1,0 +1,6 @@
+# 二维码图片和任何明文导出都不应该进入仓库
+*.png
+*.jpg
+*.jpeg
+*.webp
+node_modules/

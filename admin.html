@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>账户管理</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+</head>
+<body>
+<main>
+  <h1>账户管理（仅本地使用）</h1>
+  <p class="subtitle">填写每个朋友的账户，生成加密数据文件 data.js。这里填的内容不会上传到任何地方。</p>
+
+  <div id="accounts"></div>
+
+  <div class="row">
+    <button class="secondary" id="add">＋ 添加账户</button>
+    <button id="generate">生成加密数据</button>
+  </div>
+  <p class="error" id="error"></p>
+
+  <div class="card" id="output-card" hidden>
+    <h2>data.js</h2>
+    <p class="hint">下载后放进项目文件夹（覆盖旧的 data.js）。</p>
+    <textarea id="output" readonly></textarea>
+    <div class="row" style="margin-top: 12px">
+      <button id="download">下载 data.js</button>
+    </div>
+  </div>
+</main>
+
+<template id="account-template">
+  <div class="card account">
+    <h2><span class="title">账户</span><button class="secondary small remove">删除</button></h2>
+    <label>显示名称（朋友的名字）</label>
+    <input type="text" class="name">
+    <label>访问密码（给朋友的，至少 8 位）</label>
+    <input type="text" class="access">
+    <label>ChatGPT 邮箱</label>
+    <input type="email" class="email">
+    <label>ChatGPT 密码</label>
+    <input type="text" class="password">
+    <label>2FA 二维码图片（或在下面直接粘贴 secret / otpauth:// 链接）</label>
+    <input type="file" accept="image/*" class="qr">
+    <input type="text" class="secret" placeholder="secret" style="margin-top: 8px">
+    <label>当前验证码（应与手机 2FAS 显示一致）</label>
+    <div class="totp">------</div>
+    <div class="timer"><div></div></div>
+  </div>
+</template>
+
+<script type="module">
+  import { base32Decode, totp, secondsRemaining } from "./totp.js";
+  import { encrypt } from "./crypto.js";
+
+  const container = document.getElementById("accounts");
+  const template = document.getElementById("account-template");
+  const errorEl = document.getElementById("error");
+
+  function addAccount() {
+    const card = template.content.firstElementChild.cloneNode(true);
+    card.querySelector(".remove").onclick = () => { card.remove(); renumber(); };
+    card.querySelector(".qr").onchange = (e) => readQr(e.target.files[0], card);
+    container.append(card);
+    renumber();
+  }
+
+  function renumber() {
+    container.querySelectorAll(".account .title").forEach((el, i) => el.textContent = `账户 ${i + 1}`);
+  }
+
+  // otpauth://totp/...?secret=XXXX 里取出 secret；如果本来就是 secret 则原样返回
+  function extractSecret(text) {
+    text = text.trim();
+    if (text.startsWith("otpauth://")) return new URL(text).searchParams.get("secret") ?? "";
+    return text;
+  }
+
+  // 在浏览器本地把二维码图片解码成文字
+  async function readQr(file, card) {
+    if (!file) return;
+    const img = await createImageBitmap(file);
+    const canvas = document.createElement("canvas");
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(img, 0, 0);
+    const { data, width, height } = ctx.getImageData(0, 0, img.width, img.height);
+    const result = jsQR(data, width, height);
+    if (!result) {
+      errorEl.textContent = "无法识别二维码，请换一张更清晰的截图，或直接粘贴 secret。";
+      return;
+    }
+    errorEl.textContent = "";
+    card.querySelector(".secret").value = extractSecret(result.data);
+  }
+
+  // 每秒刷新所有卡片的验证码
+  async function refreshCodes() {
+    const remaining = secondsRemaining();
+    for (const card of container.querySelectorAll(".account")) {
+      const codeEl = card.querySelector(".totp");
+      card.querySelector(".timer > div").style.width = `${(remaining / 30) * 100}%`;
+      try {
+        const secret = extractSecret(card.querySelector(".secret").value);
+        codeEl.textContent = secret ? await totp(base32Decode(secret)) : "------";
+      } catch {
+        codeEl.textContent = "secret 无效";
+      }
+    }
+  }
+
+  function readAccounts() {
+    const accounts = [...container.querySelectorAll(".account")].map((card, i) => ({
+      label: `账户 ${i + 1}`,
+      name: card.querySelector(".name").value.trim(),
+      access: card.querySelector(".access").value,
+      email: card.querySelector(".email").value.trim(),
+      password: card.querySelector(".password").value,
+      totpSecret: extractSecret(card.querySelector(".secret").value).toUpperCase(),
+    }));
+    if (accounts.length === 0) throw new Error("至少需要一个账户。");
+    for (const a of accounts) {
+      if (!a.name || !a.access || !a.email || !a.password || !a.totpSecret) throw new Error(`${a.label}：有空着的项。`);
+      if (a.access.length < 8) throw new Error(`${a.label}：访问密码至少 8 位。`);
+      base32Decode(a.totpSecret); // 无效会抛错
+    }
+    if (new Set(accounts.map((a) => a.access)).size !== accounts.length) throw new Error("每个账户的访问密码必须不同。");
+    return accounts;
+  }
+
+  async function generate() {
+    const btn = document.getElementById("generate");
+    errorEl.textContent = "";
+    try {
+      const accounts = readAccounts();
+      btn.disabled = true;
+      btn.textContent = "加密中…";
+      const records = await Promise.all(
+        accounts.map(({ name, email, password, totpSecret, access }) =>
+          encrypt({ name, email, password, totpSecret }, access))
+      );
+      document.getElementById("output").value =
+        `// 由 admin.html 生成，只含密文，可以公开。\nexport const RECORDS = ${JSON.stringify(records, null, 2)};\n`;
+      document.getElementById("output-card").hidden = false;
+    } catch (e) {
+      errorEl.textContent = e.message;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "生成加密数据";
+    }
+  }
+
+  function download() {
+    const blob = new Blob([document.getElementById("output").value], { type: "text/javascript" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "data.js";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  document.getElementById("add").onclick = addAccount;
+  document.getElementById("generate").onclick = generate;
+  document.getElementById("download").onclick = download;
+  for (let i = 0; i < 3; i++) addAccount();
+  refreshCodes();
+  setInterval(refreshCodes, 1000);
+</script>
+</body>
+</html>

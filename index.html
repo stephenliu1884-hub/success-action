@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>ChatGPT 账户</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <h1>ChatGPT 账户</h1>
+  <p class="subtitle">输入你的访问密码，查看你的登录信息。</p>
+
+  <form class="card" id="unlock-form">
+    <label for="access">访问密码</label>
+    <div class="row">
+      <input type="password" id="access" autocomplete="current-password" style="flex: 1" autofocus>
+      <button type="submit" id="unlock">查看</button>
+    </div>
+    <p class="error" id="error"></p>
+  </form>
+
+  <div id="account" hidden>
+    <div class="card">
+      <h2><span id="greeting"></span><button class="secondary small" id="lock">退出</button></h2>
+
+      <label>邮箱</label>
+      <div class="field">
+        <span class="value" id="email"></span>
+        <button class="secondary small" data-copy="email">复制</button>
+      </div>
+
+      <label>密码</label>
+      <div class="field">
+        <span class="value" id="password">••••••••</span>
+        <button class="secondary small" id="toggle">显示</button>
+        <button class="secondary small" data-copy="password">复制</button>
+      </div>
+
+      <label>2FA 验证码</label>
+      <div class="field">
+        <span class="value totp" id="code">------</span>
+        <button class="secondary small" data-copy="code">复制</button>
+      </div>
+      <div class="timer"><div id="timer"></div></div>
+      <p class="hint" id="remaining"></p>
+    </div>
+
+    <p class="hint">
+      登录步骤：打开 <a href="https://chatgpt.com/auth/login" target="_blank" rel="noopener">chatgpt.com</a>，
+      依次粘贴邮箱、密码，最后粘贴 2FA 验证码。
+    </p>
+  </div>
+</main>
+
+<script type="module">
+  import { unlockAny } from "./crypto.js";
+  import { base32Decode, totp, secondsRemaining } from "./totp.js";
+
+  const $ = (id) => document.getElementById(id);
+  let account = null; // 解密后的账户；退出时清空
+  let timerId = null;
+  let showPassword = false;
+
+  async function loadRecords() {
+    try {
+      return (await import("./data.js")).RECORDS;
+    } catch {
+      return null;
+    }
+  }
+
+  async function unlock(event) {
+    event.preventDefault();
+    const records = await loadRecords();
+    if (!records) {
+      $("error").textContent = "还没有账户数据（缺少 data.js）。";
+      return;
+    }
+    $("unlock").disabled = true;
+    $("unlock").textContent = "验证中…";
+    $("error").textContent = "";
+    account = await unlockAny(records, $("access").value);
+    $("unlock").disabled = false;
+    $("unlock").textContent = "查看";
+    if (!account) {
+      $("error").textContent = "密码不正确。";
+      return;
+    }
+    $("access").value = "";
+    $("unlock-form").hidden = true;
+    $("account").hidden = false;
+    $("greeting").textContent = `${account.name}，你好`;
+    $("email").textContent = account.email;
+    showPassword = false;
+    renderPassword();
+    refreshCode();
+    timerId = setInterval(refreshCode, 1000);
+  }
+
+  function lock() {
+    account = null;
+    clearInterval(timerId);
+    $("account").hidden = true;
+    $("unlock-form").hidden = false;
+    $("access").focus();
+  }
+
+  function renderPassword() {
+    $("password").textContent = showPassword ? account.password : "••••••••";
+    $("toggle").textContent = showPassword ? "隐藏" : "显示";
+  }
+
+  async function refreshCode() {
+    if (!account) return;
+    const remaining = secondsRemaining();
+    $("code").textContent = await totp(base32Decode(account.totpSecret));
+    $("timer").style.width = `${(remaining / 30) * 100}%`;
+    $("remaining").textContent = `${remaining} 秒后刷新`;
+  }
+
+  async function copy(button) {
+    const values = { email: account.email, password: account.password, code: $("code").textContent };
+    await navigator.clipboard.writeText(values[button.dataset.copy]);
+    const original = button.textContent;
+    button.textContent = "已复制";
+    setTimeout(() => (button.textContent = original), 1200);
+  }
+
+  $("unlock-form").onsubmit = unlock;
+  $("lock").onclick = lock;
+  $("toggle").onclick = () => { showPassword = !showPassword; renderPassword(); };
+  document.querySelectorAll("[data-copy]").forEach((b) => (b.onclick = () => copy(b)));
+</script>
+</body>
+</html>
