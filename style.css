@@ -71,6 +71,8 @@ button.small { padding: 4px 10px; font-size: 0.8rem; font-weight: 500; }
 button:disabled { opacity: 0.5; cursor: wait; }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
+#captcha { border-radius: 8px; cursor: pointer; flex-shrink: 0; }
+
 .error { color: var(--danger); font-size: 0.9rem; min-height: 1.5em; margin: 8px 0 0; }
 .hint { color: var(--muted); font-size: 0.85rem; }
 

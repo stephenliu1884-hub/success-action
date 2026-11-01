@@ -36,7 +36,7 @@
     <h2><span class="title">账户</span><button class="secondary small remove">删除</button></h2>
     <label>显示名称（朋友的名字）</label>
     <input type="text" class="name">
-    <label>访问密码（给朋友的，至少 8 位）</label>
+    <label>访问密码（给朋友的，至少 12 位，推荐用几个随机单词，如 river-tiger-cloud-mango）</label>
     <input type="text" class="access">
     <label>ChatGPT 邮箱</label>
     <input type="email" class="email">
@@ -124,7 +124,7 @@
     if (accounts.length === 0) throw new Error("至少需要一个账户。");
     for (const a of accounts) {
       if (!a.name || !a.access || !a.email || !a.password || !a.totpSecret) throw new Error(`${a.label}：有空着的项。`);
-      if (a.access.length < 8) throw new Error(`${a.label}：访问密码至少 8 位。`);
+      if (a.access.length < 12) throw new Error(`${a.label}：访问密码至少 12 位。`);
       base32Decode(a.totpSecret); // 无效会抛错
     }
     if (new Set(accounts.map((a) => a.access)).size !== accounts.length) throw new Error("每个账户的访问密码必须不同。");
